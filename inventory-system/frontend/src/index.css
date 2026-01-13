@@ -1,0 +1,4 @@
+/* Reset defaults if needed, but Bootstrap handles most */
+body {
+  background-color: #f8f9fa;
+}
