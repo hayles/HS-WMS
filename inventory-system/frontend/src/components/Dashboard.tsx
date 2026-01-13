@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Table, Button, Container, Row, Col, Badge, Nav, Card, Accordion } from 'react-bootstrap';
-import type { InventoryItem } from '../types';
+import { Table, Button, Container, Row, Col, Badge, Nav, Card, InputGroup, Form } from 'react-bootstrap';
+import type { InventoryItem, Customer } from '../types';
 import { api } from '../api';
 import AddInventoryModal from './AddInventoryModal';
 import CustomerManager from './CustomerManager';
@@ -10,32 +10,39 @@ import InboundHistoryManager from './InboundHistoryManager';
 
 const Dashboard: React.FC = () => {
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [activeTab, setActiveTab] = useState('inventory');
   const [refreshTrigger, setRefreshTrigger] = useState(0); 
-  // Track which customer triggered the modal
   const [quickAddCustId, setQuickAddCustId] = useState<number | null>(null);
+  
+  // Inventory Filter State
+  const [filterCustId, setFilterCustId] = useState<number>(0);
 
-  const fetchInventory = async () => {
-    // ... (fetch logic same) ...
+  const fetchData = async () => {
     try {
-      const response = await api.get<InventoryItem[]>('/inventory/');
-      setInventory(response.data);
+        // Fetch inventory and customers together to populate filter
+        const [invRes, custRes] = await Promise.all([
+            api.get<InventoryItem[]>('/inventory/'),
+            api.get<Customer[]>('/customers/')
+        ]);
+        setInventory(invRes.data);
+        setCustomers(custRes.data);
     } catch (error) {
-      console.error("Failed to fetch inventory", error);
+        console.error("Failed to fetch data", error);
     }
   };
 
   useEffect(() => {
-    if (activeTab === 'inventory') fetchInventory();
+    if (activeTab === 'inventory') fetchData();
   }, [activeTab, refreshTrigger]); 
 
-  // ... (Handlers stay same) ...
+  // --- Handlers ---
   const handleDelete = async (id: number) => {
     if (window.confirm("Delete this inventory entry?")) {
       try {
         await api.delete(`/inventory/${id}`);
-        fetchInventory();
+        fetchData(); // Refresh both inventory and potentially customers list logic
       } catch (error) {
         console.error("Delete failed", error);
       }
@@ -47,7 +54,7 @@ const Dashboard: React.FC = () => {
     if (newQty !== null) {
         try {
             await api.put(`/inventory/${id}`, { quantity: parseInt(newQty) });
-            fetchInventory();
+            fetchData();
         } catch (error) {
             console.error("Update qty failed", error);
         }
@@ -65,7 +72,7 @@ const Dashboard: React.FC = () => {
             safety_stock: parseInt(safety),
             target_stock: parseInt(target)
         });
-        fetchInventory();
+        fetchData();
     } catch (error) {
         console.error("Update alerts failed", error);
     }
@@ -73,7 +80,7 @@ const Dashboard: React.FC = () => {
 
   const handleStockInSuccess = () => {
     setRefreshTrigger(prev => prev + 1);
-    fetchInventory();
+    fetchData();
   };
 
   const handleOpenAddModal = (custId: number | null = null) => {
@@ -83,7 +90,9 @@ const Dashboard: React.FC = () => {
 
   // --- Grouping Logic ---
   const groupedInventory = inventory.reduce((acc, item) => {
-      // ... (grouping logic same) ...
+      // Filter logic
+      if (filterCustId !== 0 && item.customer_id !== filterCustId) return acc;
+
       const custId = item.customer_id;
       const custName = item.customer?.name || 'Unknown Customer';
       if (!acc[custId]) {
@@ -99,9 +108,31 @@ const Dashboard: React.FC = () => {
       case 'inventory':
         return (
           <>
-            <div className="d-flex justify-content-between align-items-center mb-3">
-                <h4>Current Stock</h4>
-                <Button variant="primary" onClick={() => handleOpenAddModal(null)}>+ Stock In (General)</Button>
+            <div className="d-flex justify-content-between align-items-center mb-4">
+                <div className="d-flex align-items-center gap-3">
+                    <h4 className="mb-0">Current Stock</h4>
+                    <Button variant="primary" onClick={() => handleOpenAddModal(null)}>+ Stock In (Add)</Button>
+                </div>
+                
+                {/* Filter Dropdown */}
+                <div style={{minWidth: '350px'}}>
+                    <InputGroup className="shadow border-0 rounded overflow-hidden">
+                        <InputGroup.Text className="bg-warning text-dark border-0 px-3 fw-bold">
+                            <span className="fs-5">👥</span>
+                        </InputGroup.Text>
+                        <Form.Select 
+                            value={filterCustId} 
+                            onChange={e => setFilterCustId(Number(e.target.value))}
+                            className="bg-dark text-white border-0 fw-bold"
+                            style={{ height: '48px', cursor: 'pointer', paddingLeft: '15px' }}
+                        >
+                            <option value={0} className="bg-white text-dark">-- View All Stock Owners --</option>
+                            {customers.map(c => (
+                                <option key={c.id} value={c.id} className="bg-white text-dark">{c.name}</option>
+                            ))}
+                        </Form.Select>
+                    </InputGroup>
+                </div>
             </div>
             
             {inventory.length === 0 ? (
@@ -120,7 +151,6 @@ const Dashboard: React.FC = () => {
                                 </div>
                             </Card.Header>
                             <Table striped hover responsive className="mb-0 border-top">
-                                {/* ... (Table content same) ... */}
                                 <thead className="bg-light">
                                     <tr className="text-secondary small text-uppercase">
                                         <th style={{width: '15%'}} className="ps-4">SKU Code</th>
@@ -183,12 +213,14 @@ const Dashboard: React.FC = () => {
 
   return (
     <div className="d-flex" style={{ minHeight: '100vh', backgroundColor: '#f8f9fa' }}>
-      {/* Sidebar same */}
-      <div className="d-flex flex-column flex-shrink-0 p-3 text-white bg-dark" style={{ width: '280px' }}>
-        <a href="/" className="d-flex align-items-center mb-3 mb-md-0 me-md-auto text-white text-decoration-none">
-          <span className="fs-4">📦 WMS System</span>
+      {/* Sidebar */}
+      <div className="d-flex flex-column flex-shrink-0 p-3 text-white bg-dark border-end border-secondary" style={{ width: '280px' }}>
+        <a href="/" className="d-flex align-items-center mb-3 mb-md-0 me-md-auto text-decoration-none">
+          <span className="fs-3 fw-bold px-3 py-2 rounded bg-warning text-dark shadow-sm w-100 text-center">
+            📦 HS-WMS
+          </span>
         </a>
-        <hr />
+        <hr className="bg-secondary" />
         <Nav variant="pills" className="flex-column mb-auto">
           <Nav.Item><Nav.Link active={activeTab === 'inventory'} onClick={() => setActiveTab('inventory')} className="text-white cursor-pointer">📊 Inventory Stock</Nav.Link></Nav.Item>
           <Nav.Item><Nav.Link active={activeTab === 'inbound'} onClick={() => setActiveTab('inbound')} className="text-white cursor-pointer">📥 Inbound History</Nav.Link></Nav.Item>
@@ -198,7 +230,7 @@ const Dashboard: React.FC = () => {
           <Nav.Item><Nav.Link active={activeTab === 'customers'} onClick={() => setActiveTab('customers')} className="text-white cursor-pointer">👥 Customers</Nav.Link></Nav.Item>
           <Nav.Item><Nav.Link active={activeTab === 'products'} onClick={() => setActiveTab('products')} className="text-white cursor-pointer">🏷️ Products (SKUs)</Nav.Link></Nav.Item>
         </Nav>
-        <hr />
+        <hr className="bg-secondary" />
         <div className="dropdown">
           <a href="#" className="d-flex align-items-center text-white text-decoration-none"><strong>Admin User</strong></a>
         </div>

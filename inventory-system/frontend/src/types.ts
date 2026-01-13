@@ -2,6 +2,7 @@ export interface Customer {
   id?: number;
   name: string;
   contact_info?: string;
+  products?: Product[];
 }
 
 export interface Product {

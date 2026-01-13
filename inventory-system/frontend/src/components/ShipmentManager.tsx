@@ -9,10 +9,12 @@ const ShipmentManager: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   
-  // -- Form State --
-  // Header
+  // Form State
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [selectedCust, setSelectedCust] = useState<number>(0);
+  const [selectedProd, setSelectedProd] = useState<number>(0);
   const [stockSource, setStockSource] = useState<number>(0); 
+  const [qty, setQty] = useState<number>(0);
   const [rma, setRma] = useState('');
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   
@@ -24,9 +26,6 @@ const ShipmentManager: React.FC = () => {
   const [items, setItems] = useState<ItemLine[]>([{ productId: 0, quantity: 0 }]);
 
   const [error, setError] = useState<string | null>(null);
-
-  // Edit Mode (Single Shipment Only)
-  const [editingId, setEditingId] = useState<number | null>(null);
 
   const fetchData = async () => {
     const res = await api.get('/shipments/');
@@ -49,7 +48,7 @@ const ShipmentManager: React.FC = () => {
   const handleOpen = () => {
     setEditingId(null);
     fetchOptions();
-    setItems([{ productId: 0, quantity: 0 }]); // Reset items
+    setItems([{ productId: 0, quantity: 0 }]); 
     setRma('');
     setShowModal(true);
     setError(null);
@@ -59,8 +58,8 @@ const ShipmentManager: React.FC = () => {
     fetchOptions();
     setEditingId(s.id!);
     setSelectedCust(s.customer_id);
-    setStockSource(0); // Edit mode doesn't support changing source easily yet
-    setItems([{ productId: s.product_id, quantity: s.quantity }]); // Single item editing
+    setStockSource(0);
+    setItems([{ productId: s.product_id, quantity: s.quantity }]);
     setRma(s.rma_ticket || '');
     setDate(s.shipment_date.slice(0, 10));
     setShowModal(true);
@@ -75,7 +74,7 @@ const ShipmentManager: React.FC = () => {
     } catch (e) { alert("Delete failed."); }
   };
 
-  // -- Item Line Handlers --
+  // ... (Item handlers same) ...
   const handleAddItem = () => {
       setItems([...items, { productId: products[0]?.id || 0, quantity: 0 }]);
   };
@@ -95,23 +94,20 @@ const ShipmentManager: React.FC = () => {
   const handleSubmit = async () => {
     if(!selectedCust) { setError("Select a customer."); return; }
     
-    // Validate items
     const validItems = items.filter(i => i.productId > 0 && i.quantity > 0);
     if (validItems.length === 0) {
-        setError("Add at least one valid item (Product + Qty > 0).");
+        setError("Add at least one valid item.");
         return;
     }
 
     try {
         if (editingId) {
-            // Update (Single mode)
             await api.put(`/shipments/${editingId}`, {
-                quantity: validItems[0].quantity, // Only take first item
+                quantity: validItems[0].quantity,
                 shipment_date: new Date(date).toISOString(),
                 rma_ticket: rma
             });
         } else {
-            // Create Batch
             await api.post('/shipments/batch/', {
                 customer_id: selectedCust,
                 shipment_date: new Date(date).toISOString(),
@@ -129,46 +125,61 @@ const ShipmentManager: React.FC = () => {
 
   return (
     <div className="mt-3">
-      <div className="d-flex justify-content-between align-items-center mb-3">
+      <div className="d-flex justify-content-between align-items-center mb-4">
         <h4>Outbound Shipments</h4>
-        <Button variant="danger" onClick={handleOpen}>- Create Shipment (Batch)</Button>
       </div>
 
-      <Table striped bordered hover responsive>
-        <thead className="table-dark">
-          <tr>
-            <th>Date</th>
-            <th>Customer</th>
-            <th>SKU</th>
-            <th>Qty</th>
-            <th>RMA Ticket</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {shipments.length === 0 ? <tr><td colSpan={6} className="text-center">No shipments.</td></tr> : 
-            shipments.map(s => (
-              <tr key={s.id}>
-                <td>{new Date(s.shipment_date).toLocaleDateString()}</td>
-                <td>{s.customer?.name}</td>
-                <td><Badge bg="secondary">{s.product?.sku_code}</Badge> {s.product?.name}</td>
-                <td className="text-danger fw-bold">-{s.quantity}</td>
-                <td>{s.rma_ticket || '-'}</td>
-                <td>
-                    <Button variant="outline-primary" size="sm" className="me-2" onClick={() => handleEdit(s)}>Edit</Button>
-                    <Button variant="outline-danger" size="sm" onClick={() => s.id && handleDelete(s.id)}>Del</Button>
-                </td>
-              </tr>
-            ))
-          }
-        </tbody>
-      </Table>
+      <Card className="border-0 shadow">
+          <Card.Header className="bg-dark text-white d-flex justify-content-between align-items-center py-3">
+              <div>
+                  <span className="fs-5 fw-bold">📤 Shipment History</span>
+                  <Badge bg="warning" text="dark" className="ms-3">{shipments.length} Records</Badge>
+              </div>
+              <Button variant="danger" onClick={handleOpen} className="fw-bold">+ Create Outbound</Button>
+          </Card.Header>
+          <Card.Body className="p-0">
+            <Table striped hover responsive className="mb-0">
+                <thead className="bg-light">
+                <tr>
+                    <th className="ps-4">Date</th>
+                    <th>Customer</th>
+                    <th>SKU Details</th>
+                    <th>Qty Out</th>
+                    <th>RMA Ticket</th>
+                    <th className="text-end pe-4">Actions</th>
+                </tr>
+                </thead>
+                <tbody>
+                {shipments.length === 0 ? <tr><td colSpan={6} className="text-center py-4 text-muted">No shipments recorded yet.</td></tr> : 
+                    shipments.map(s => (
+                    <tr key={s.id}>
+                        <td className="ps-4 text-muted">{new Date(s.shipment_date).toLocaleDateString()}</td>
+                        <td className="fw-bold">{s.customer?.name}</td>
+                        <td>
+                            <Badge bg="secondary" className="me-2">{s.product?.sku_code}</Badge> 
+                            <span>{s.product?.name}</span>
+                        </td>
+                        <td><Badge bg="danger" className="fs-6 px-3">-{s.quantity}</Badge></td>
+                        <td>{s.rma_ticket ? <span className="text-monospace bg-light px-2 py-1 border rounded small">{s.rma_ticket}</span> : '-'}</td>
+                        <td className="text-end pe-4">
+                            <Button variant="outline-primary" size="sm" className="me-2" onClick={() => handleEdit(s)}>Edit</Button>
+                            <Button variant="outline-danger" size="sm" onClick={() => s.id && handleDelete(s.id)}>Del</Button>
+                        </td>
+                    </tr>
+                    ))
+                }
+                </tbody>
+            </Table>
+          </Card.Body>
+      </Card>
 
+      {/* Modal - keeping styles consistent inside as well */}
       <Modal show={showModal} onHide={() => setShowModal(false)} size="lg">
-        <Modal.Header closeButton><Modal.Title>{editingId ? "Edit Shipment (Single)" : "Create Batch Shipment"}</Modal.Title></Modal.Header>
+        <Modal.Header closeButton className="bg-light"><Modal.Title>{editingId ? "Edit Shipment (Single)" : "Create Batch Shipment"}</Modal.Title></Modal.Header>
         <Modal.Body>
           {error && <Alert variant="danger">{error}</Alert>}
           <Form>
+            {/* ... Form Content (Reuse existing logic) ... */}
             <Row className="mb-3">
                 <Col md={4}>
                     <Form.Group>
@@ -184,7 +195,7 @@ const ShipmentManager: React.FC = () => {
                 </Col>
             </Row>
             
-            <Row className="mb-3 p-3 bg-light rounded mx-0">
+            <Row className="mb-3 p-3 bg-light rounded mx-0 border">
                 <Col md={6}>
                     <Form.Group>
                     <Form.Label>Customer (Sold By)</Form.Label>
@@ -206,12 +217,12 @@ const ShipmentManager: React.FC = () => {
                 )}
             </Row>
 
-            <h6 className="mt-4">Shipment Items</h6>
+            <h6 className="mt-4 border-bottom pb-2">Shipment Items</h6>
             {items.map((item, idx) => (
                 <Row key={idx} className="mb-2 align-items-end">
                     <Col xs={7}>
                         <Form.Group>
-                            <Form.Label className="small">Product</Form.Label>
+                            <Form.Label className="small text-muted">Product</Form.Label>
                             <Form.Select 
                                 disabled={!!editingId}
                                 value={item.productId} 
@@ -224,7 +235,7 @@ const ShipmentManager: React.FC = () => {
                     </Col>
                     <Col xs={3}>
                         <Form.Group>
-                            <Form.Label className="small">Qty</Form.Label>
+                            <Form.Label className="small text-muted">Qty</Form.Label>
                             <Form.Control 
                                 type="number" 
                                 value={item.quantity} 
@@ -241,12 +252,12 @@ const ShipmentManager: React.FC = () => {
             ))}
             
             {!editingId && (
-                <Button variant="outline-secondary" size="sm" onClick={handleAddItem} className="mt-2">+ Add Item Line</Button>
+                <Button variant="outline-secondary" size="sm" onClick={handleAddItem} className="mt-2 w-100 border-dashed">+ Add Another Item</Button>
             )}
 
           </Form>
         </Modal.Body>
-        <Modal.Footer>
+        <Modal.Footer className="bg-light">
             <Button variant="secondary" onClick={() => setShowModal(false)}>Cancel</Button>
             <Button variant="danger" onClick={handleSubmit}>{editingId ? "Update Shipment" : "Confirm Batch Shipment"}</Button>
         </Modal.Footer>

@@ -60,7 +60,18 @@ class InboundTransaction(SQLModel, table=True):
     customer: Optional[Customer] = Relationship()
     product: Optional[Product] = Relationship()
 
+class CustomerProductLink(SQLModel, table=True):
+    __table_args__ = {"extend_existing": True}
+    customer_id: int = Field(foreign_key="customer.id", primary_key=True)
+    product_id: int = Field(foreign_key="product.id", primary_key=True)
+
 # --- Read Models (DTOs) for Responses ---
+class CustomerReadWithProducts(SQLModel):
+    id: int
+    name: str
+    contact_info: Optional[str] = None
+    products: List[Product] = []
+
 class InventoryRead(SQLModel):
     id: int
     customer_id: int
@@ -101,6 +112,22 @@ class ShipmentRead(SQLModel):
     shipment_date: datetime
     rma_ticket: Optional[str]
     created_at: datetime
+
+class ShipmentUpdate(SQLModel):
+    quantity: Optional[int] = None
+    shipment_date: Optional[datetime] = None
+    rma_ticket: Optional[str] = None
+
+class ShipmentItem(SQLModel):
+    product_id: int
+    quantity: int
+
+class BatchShipmentCreate(SQLModel):
+    customer_id: int
+    shipment_date: datetime
+    rma_ticket: Optional[str] = None
+    stock_source_customer_id: Optional[int] = None
+    items: List[ShipmentItem]
 
 class InboundRead(SQLModel):
     id: int
@@ -151,10 +178,24 @@ def create_customer(customer: Customer):
         session.refresh(customer)
         return customer
 
-@app.get("/customers/", response_model=List[Customer])
+@app.get("/customers/", response_model=List[CustomerReadWithProducts])
 def read_customers():
+    results = []
     with Session(engine) as session:
-        return session.exec(select(Customer)).all()
+        customers = session.exec(select(Customer)).all()
+        for cust in customers:
+            # Query linked products for each customer
+            statement = select(Product).join(CustomerProductLink).where(CustomerProductLink.customer_id == cust.id)
+            linked_prods = session.exec(statement).all()
+            
+            cust_data = CustomerReadWithProducts(
+                id=cust.id,
+                name=cust.name,
+                contact_info=cust.contact_info,
+                products=linked_prods
+            )
+            results.append(cust_data)
+        return results
 
 @app.put("/customers/{customer_id}", response_model=Customer)
 def update_customer(customer_id: int, customer_data: Customer):
@@ -203,7 +244,6 @@ def update_product(product_id: int, product_data: Product):
         if not db_product:
             raise HTTPException(status_code=404, detail="Product not found")
         
-        # Check if new SKU code conflicts with another product
         if product_data.sku_code != db_product.sku_code:
             existing = session.exec(select(Product).where(Product.sku_code == product_data.sku_code)).first()
             if existing:
@@ -242,7 +282,6 @@ def read_inventory():
 @app.post("/inventory/", response_model=InventoryRead)
 def create_inventory_entry(inventory_data: InventoryCreate):
     with Session(engine) as session:
-        # 1. Log the Inbound Transaction (Allows 0 for initialization)
         inbound = InboundTransaction(
             customer_id=inventory_data.customer_id,
             product_id=inventory_data.product_id,
@@ -251,23 +290,19 @@ def create_inventory_entry(inventory_data: InventoryCreate):
         )
         session.add(inbound)
 
-        # 2. Update or Create Inventory
         existing = session.exec(select(Inventory).where(
             Inventory.customer_id == inventory_data.customer_id,
             Inventory.product_id == inventory_data.product_id
         )).first()
         
         if existing:
-            # Update existing: Add quantity (even if adding 0)
             existing.quantity += inventory_data.quantity
             existing.updated_at = datetime.now()
-            # Update alerts if provided
             if inventory_data.target_stock is not None: existing.target_stock = inventory_data.target_stock
             if inventory_data.safety_stock is not None: existing.safety_stock = inventory_data.safety_stock
             session.add(existing)
             db_item = existing
         else:
-            # Create new (Allows quantity=0)
             db_item = Inventory.from_orm(inventory_data)
             db_item.updated_at = datetime.now()
             session.add(db_item)
@@ -288,7 +323,6 @@ def update_inventory_quantity(inventory_id: int, data: InventoryUpdate):
         if data.quantity is not None:
             diff = data.quantity - db_item.quantity
             if diff != 0:
-                # Log adjustment
                 adjustment = InboundTransaction(
                     customer_id=db_item.customer_id,
                     product_id=db_item.product_id,
@@ -296,13 +330,10 @@ def update_inventory_quantity(inventory_id: int, data: InventoryUpdate):
                     remarks=f"Manual Adjustment (Set Qty: {db_item.quantity} -> {data.quantity})"
                 )
                 session.add(adjustment)
-            
             db_item.quantity = data.quantity
 
-        if data.target_stock is not None:
-            db_item.target_stock = data.target_stock
-        if data.safety_stock is not None:
-            db_item.safety_stock = data.safety_stock
+        if data.target_stock is not None: db_item.target_stock = data.target_stock
+        if data.safety_stock is not None: db_item.safety_stock = data.safety_stock
             
         db_item.updated_at = datetime.now()
         session.add(db_item)
@@ -331,73 +362,8 @@ def read_inbound_history():
         ).order_by(InboundTransaction.inbound_date.desc())
         return session.exec(statement).all()
 
-class ShipmentItem(SQLModel):
-    product_id: int
-    quantity: int
-
-class BatchShipmentCreate(SQLModel):
-    customer_id: int
-    shipment_date: datetime
-    rma_ticket: Optional[str] = None
-    stock_source_customer_id: Optional[int] = None
-    items: List[ShipmentItem]
-
-# ... (ShipmentRead stays same) ...
-
-# ... (InboundRead stays same) ...
-
-# ... (Database Setup ...)
-
-# ... (Skip to Shipment Routes) ...
-
-@app.post("/shipments/batch/", response_model=List[ShipmentRead])
-def create_batch_shipment(batch_data: BatchShipmentCreate):
-    created_shipments = []
-    with Session(engine) as session:
-        inventory_owner_id = batch_data.stock_source_customer_id or batch_data.customer_id
-        
-        # Validate all items first
-        for item in batch_data.items:
-            inventory_entry = session.exec(select(Inventory).where(
-                Inventory.customer_id == inventory_owner_id,
-                Inventory.product_id == item.product_id
-            )).first()
-
-            if not inventory_entry:
-                raise HTTPException(status_code=400, detail=f"No inventory found for Product ID {item.product_id} (Source: {inventory_owner_id}).")
-            
-            if inventory_entry.quantity < item.quantity:
-                raise HTTPException(status_code=400, detail=f"Insufficient inventory for Product ID {item.product_id}. Current: {inventory_entry.quantity}")
-
-            # Deduct Inventory
-            inventory_entry.quantity -= item.quantity
-            inventory_entry.updated_at = datetime.now()
-            session.add(inventory_entry)
-
-            # Create Shipment Record
-            shipment = Shipment(
-                customer_id=batch_data.customer_id,
-                product_id=item.product_id,
-                quantity=item.quantity,
-                shipment_date=batch_data.shipment_date,
-                rma_ticket=batch_data.rma_ticket
-            )
-            session.add(shipment)
-            created_shipments.append(shipment)
-        
-        session.commit()
-        
-        # Refresh for response
-        for s in created_shipments:
-            session.refresh(s)
-            _ = s.customer
-            _ = s.product
-            
-        return created_shipments
-
 # --- Shipment Routes ---
 @app.post("/shipments/", response_model=ShipmentRead)
-# ... (rest stays same) ...
 def create_shipment(shipment_data: ShipmentCreate):
     with Session(engine) as session:
         inventory_owner_id = shipment_data.stock_source_customer_id or shipment_data.customer_id
@@ -426,12 +392,46 @@ def create_shipment(shipment_data: ShipmentCreate):
         _ = shipment.product
         return shipment
 
-class ShipmentUpdate(SQLModel):
-    quantity: Optional[int] = None
-    shipment_date: Optional[datetime] = None
-    rma_ticket: Optional[str] = None
+@app.post("/shipments/batch/", response_model=List[ShipmentRead])
+def create_batch_shipment(batch_data: BatchShipmentCreate):
+    created_shipments = []
+    with Session(engine) as session:
+        inventory_owner_id = batch_data.stock_source_customer_id or batch_data.customer_id
+        
+        for item in batch_data.items:
+            inventory_entry = session.exec(select(Inventory).where(
+                Inventory.customer_id == inventory_owner_id,
+                Inventory.product_id == item.product_id
+            )).first()
 
-# ... (skip to Shipment Routes) ...
+            if not inventory_entry:
+                raise HTTPException(status_code=400, detail=f"No inventory found for Product ID {item.product_id} (Source: {inventory_owner_id}).")
+            
+            if inventory_entry.quantity < item.quantity:
+                raise HTTPException(status_code=400, detail=f"Insufficient inventory for Product ID {item.product_id}. Current: {inventory_entry.quantity}")
+
+            inventory_entry.quantity -= item.quantity
+            inventory_entry.updated_at = datetime.now()
+            session.add(inventory_entry)
+
+            shipment = Shipment(
+                customer_id=batch_data.customer_id,
+                product_id=item.product_id,
+                quantity=item.quantity,
+                shipment_date=batch_data.shipment_date,
+                rma_ticket=batch_data.rma_ticket
+            )
+            session.add(shipment)
+            created_shipments.append(shipment)
+        
+        session.commit()
+        
+        for s in created_shipments:
+            session.refresh(s)
+            _ = s.customer
+            _ = s.product
+            
+        return created_shipments
 
 @app.get("/shipments/", response_model=List[ShipmentRead])
 def read_shipments():
@@ -445,28 +445,12 @@ def read_shipments():
 @app.put("/shipments/{shipment_id}", response_model=ShipmentRead)
 def update_shipment(shipment_id: int, update_data: ShipmentUpdate):
     with Session(engine) as session:
-        # 1. Get original shipment
         db_shipment = session.get(Shipment, shipment_id)
         if not db_shipment:
             raise HTTPException(status_code=404, detail="Shipment not found")
         
-        # 2. Handle Quantity Change (Adjust Inventory)
         if update_data.quantity is not None and update_data.quantity != db_shipment.quantity:
-            diff = update_data.quantity - db_shipment.quantity # e.g. New 15 - Old 10 = +5 (Need to deduct 5 more)
-            
-            # Find related inventory (Stock Source is implicit in customer_id for now, 
-            # as we didn't store source_customer_id in Shipment table explicitly, assuming same or handled.
-            # Wait, previously we handled shared stock but didn't store source_id in DB?
-            # Looking at create_shipment: shipment = Shipment(**shipment_dict). 
-            # We stored customer_id as the "Selling Customer".
-            # If we deducted from a DIFFERENT source, we have a problem: we don't know who we deducted from!
-            # CRITICAL: For now, we assume we deduct/refund to the Shipment.customer_id.
-            # If shared stock was used, this Update/Delete logic might return stock to the WRONG person 
-            # unless we stored 'source_customer_id' in Shipment table.
-            
-            # Since we can't change schema easily without migration right now and user wants this feature:
-            # We will proceed assuming Inventory belongs to shipment.customer_id.
-            # Limitation: Refunds for shared stock might go to the selling customer.
+            diff = update_data.quantity - db_shipment.quantity
             
             inventory_entry = session.exec(select(Inventory).where(
                 Inventory.customer_id == db_shipment.customer_id,
@@ -476,7 +460,6 @@ def update_shipment(shipment_id: int, update_data: ShipmentUpdate):
             if not inventory_entry:
                  raise HTTPException(status_code=400, detail="Related inventory record not found to adjust stock.")
             
-            # If diff is positive (increased shipment), check if we have enough stock
             if diff > 0 and inventory_entry.quantity < diff:
                 raise HTTPException(status_code=400, detail="Insufficient stock to increase shipment quantity.")
             
@@ -486,7 +469,6 @@ def update_shipment(shipment_id: int, update_data: ShipmentUpdate):
             
             db_shipment.quantity = update_data.quantity
 
-        # 3. Update other fields
         if update_data.shipment_date: db_shipment.shipment_date = update_data.shipment_date
         if update_data.rma_ticket is not None: db_shipment.rma_ticket = update_data.rma_ticket
         
@@ -502,7 +484,6 @@ def delete_shipment(shipment_id: int):
         if not shipment:
             raise HTTPException(status_code=404, detail="Shipment not found")
         
-        # Restore Inventory
         inventory_entry = session.exec(select(Inventory).where(
             Inventory.customer_id == shipment.customer_id,
             Inventory.product_id == shipment.product_id
@@ -516,6 +497,36 @@ def delete_shipment(shipment_id: int):
         session.delete(shipment)
         session.commit()
         return {"ok": True}
+
+# --- Customer-Product Link Routes ---
+@app.post("/customers/{customer_id}/products/{product_id}")
+def link_product_to_customer(customer_id: int, product_id: int):
+    with Session(engine) as session:
+        link = session.get(CustomerProductLink, (customer_id, product_id))
+        if link:
+            return {"ok": True, "message": "Already linked"}
+        
+        new_link = CustomerProductLink(customer_id=customer_id, product_id=product_id)
+        session.add(new_link)
+        session.commit()
+        return {"ok": True}
+
+@app.delete("/customers/{customer_id}/products/{product_id}")
+def unlink_product_from_customer(customer_id: int, product_id: int):
+    with Session(engine) as session:
+        link = session.get(CustomerProductLink, (customer_id, product_id))
+        if not link:
+            raise HTTPException(status_code=404, detail="Link not found")
+        session.delete(link)
+        session.commit()
+        return {"ok": True}
+
+@app.get("/customers/{customer_id}/products", response_model=List[Product])
+def read_customer_products(customer_id: int):
+    with Session(engine) as session:
+        statement = select(Product).join(CustomerProductLink).where(CustomerProductLink.customer_id == customer_id)
+        products = session.exec(statement).all()
+        return products
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)

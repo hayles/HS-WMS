@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Modal, Button, Form, Alert } from 'react-bootstrap';
+import { Modal, Button, Form, Alert, Row, Col } from 'react-bootstrap';
 import { api } from '../api';
 import type { Customer, Product } from '../types';
 
@@ -12,7 +12,7 @@ interface AddInventoryModalProps {
 
 const AddInventoryModal: React.FC<AddInventoryModalProps> = ({ show, handleClose, refreshInventory, initialCustomerId }) => {
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
+  const [products, setProducts] = useState<Product[]>([]); 
   
   const [selectedCust, setSelectedCust] = useState<number>(0);
   const [selectedProd, setSelectedProd] = useState<number>(0);
@@ -20,51 +20,36 @@ const AddInventoryModal: React.FC<AddInventoryModalProps> = ({ show, handleClose
   const [remarks, setRemarks] = useState('');
   const [error, setError] = useState<string | null>(null);
 
+  // Load customers
   useEffect(() => {
     if (show) {
-      const loadData = async () => {
-          try {
-            const [cRes, pRes] = await Promise.all([
-                api.get<Customer[]>('/customers/'),
-                api.get<Product[]>('/products/')
-            ]);
-            
-            setCustomers(cRes.data);
-            setProducts(pRes.data);
-
-            // Set Customer
-            if (initialCustomerId) {
-                // Ensure type match
-                const targetId = Number(initialCustomerId);
-                // Verify existence (optional but good)
-                const exists = cRes.data.find(c => c.id === targetId);
-                if (exists) {
-                    setSelectedCust(targetId);
-                } else if (cRes.data.length > 0) {
-                    setSelectedCust(cRes.data[0].id!);
-                }
-            } else if (cRes.data.length > 0) {
-                setSelectedCust(cRes.data[0].id!);
-            }
-
-            // Set Product
-            if (pRes.data.length > 0) {
-                setSelectedProd(pRes.data[0].id!);
-            }
-
-          } catch (err) {
-              console.error(err);
-              setError("Failed to load options.");
+      api.get<Customer[]>('/customers/').then(res => {
+          setCustomers(res.data);
+          if (initialCustomerId) {
+              setSelectedCust(Number(initialCustomerId));
+          } else if (res.data.length > 0) {
+              setSelectedCust(res.data[0].id!);
           }
-      };
-      
-      loadData();
-      
+      });
       setQty(0);
       setRemarks('');
       setError(null);
     }
   }, [show, initialCustomerId]);
+
+  // Load products
+  useEffect(() => {
+      if (selectedCust && show) {
+          api.get<Product[]>(`/customers/${selectedCust}/products`).then(res => {
+              setProducts(res.data);
+              if (res.data.length > 0) {
+                  setSelectedProd(res.data[0].id!);
+              } else {
+                  setSelectedProd(0); 
+              }
+          });
+      }
+  }, [selectedCust, show]);
 
   const handleSubmit = async () => {
     if (!selectedCust || !selectedProd || qty < 0) {
@@ -86,37 +71,56 @@ const AddInventoryModal: React.FC<AddInventoryModalProps> = ({ show, handleClose
   };
 
   return (
-    <Modal show={show} onHide={handleClose}>
-      <Modal.Header closeButton><Modal.Title>Stock In (Add Inventory)</Modal.Title></Modal.Header>
+    <Modal show={show} onHide={handleClose} centered>
+      <Modal.Header closeButton className="bg-light">
+          <Modal.Title>📥 Stock In (Add Inventory)</Modal.Title>
+      </Modal.Header>
       <Modal.Body>
         {error && <Alert variant="danger">{error}</Alert>}
         <Form>
-          <Form.Group className="mb-3">
-            <Form.Label>Customer</Form.Label>
-            <Form.Select onChange={e => setSelectedCust(Number(e.target.value))} value={selectedCust}>
-                {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </Form.Select>
-          </Form.Group>
+          <Row className="mb-3">
+              <Col>
+                <Form.Group>
+                    <Form.Label>Customer</Form.Label>
+                    <Form.Select 
+                        onChange={e => setSelectedCust(Number(e.target.value))} 
+                        value={selectedCust}
+                        className="fw-bold"
+                    >
+                        {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </Form.Select>
+                </Form.Group>
+              </Col>
+          </Row>
+          
           <Form.Group className="mb-3">
             <Form.Label>Product (SKU)</Form.Label>
             <Form.Select onChange={e => setSelectedProd(Number(e.target.value))} value={selectedProd}>
+                {products.length === 0 ? <option value={0}>No linked SKUs found</option> : null}
                 {products.map(p => <option key={p.id} value={p.id}>{p.sku_code} - {p.name}</option>)}
             </Form.Select>
+            <Form.Text className="text-muted">Only authorized SKUs for this customer are shown.</Form.Text>
           </Form.Group>
-          <Form.Group className="mb-3">
-            <Form.Label>Quantity (Add)</Form.Label>
-            <Form.Control type="number" value={qty} onChange={e => setQty(Number(e.target.value))} />
-            <Form.Text className="text-muted">This quantity will be ADDED to existing stock.</Form.Text>
-          </Form.Group>
-          <Form.Group className="mb-3">
-            <Form.Label>Remarks</Form.Label>
-            <Form.Control type="text" value={remarks} onChange={e => setRemarks(e.target.value)} placeholder="Optional (e.g. PO#123)" />
-          </Form.Group>
+
+          <Row className="mb-3">
+              <Col md={6}>
+                <Form.Group>
+                    <Form.Label>Quantity (Add)</Form.Label>
+                    <Form.Control type="number" value={qty} onChange={e => setQty(Number(e.target.value))} />
+                </Form.Group>
+              </Col>
+              <Col md={6}>
+                <Form.Group>
+                    <Form.Label>Remarks / PO#</Form.Label>
+                    <Form.Control type="text" value={remarks} onChange={e => setRemarks(e.target.value)} placeholder="Optional" />
+                </Form.Group>
+              </Col>
+          </Row>
         </Form>
       </Modal.Body>
-      <Modal.Footer>
+      <Modal.Footer className="bg-light">
         <Button variant="secondary" onClick={handleClose}>Cancel</Button>
-        <Button variant="primary" onClick={handleSubmit}>Confirm Stock In</Button>
+        <Button variant="primary" onClick={handleSubmit} className="px-4">Confirm Stock In</Button>
       </Modal.Footer>
     </Modal>
   );
