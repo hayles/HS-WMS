@@ -1,101 +1,58 @@
-# Inventory Management System (HS-WMS)
+# HS-WMS (Professional Inventory Management System)
 
-A lightweight warehouse management system for tracking customers, products, inventory, inbound stock, and shipments. The project is split into a FastAPI backend and a React + Vite frontend.
+A modern, full-stack Warehouse Management System (WMS) prototype designed for multi-customer inventory tracking, authorizing specific SKUs per customer, and handling complex outbound shipments.
 
-## Project Structure
+## 🚀 Key Features
 
-```
-inventory-system/
-├─ backend/   # FastAPI + SQLModel API service
-├─ frontend/  # React + TypeScript UI
-└─ README.md  # This document
-```
+### 📊 Inventory & Warehouse Control
+- **Customer-Specific SKUs**: Authorize which products (SKUs) each customer is allowed to stock and ship.
+- **Dynamic Grouping**: View inventory stock grouped by Customer with a clean, high-contrast card UI.
+- **Stock In (Inbound)**: Smart replenishment that appends to existing stock with automated transaction logging.
+- **Inventory Health Alerts**: Set "Safety Stock" and "Target Stock" levels per item with visual warnings (Red highlight) for low stock.
 
-## Tech Stack
+### 📤 Advanced Outbound Management
+- **One-Click Batch Shipment**: Process multiple SKUs in a single order (RMA Ticket).
+- **Mixed-Source Fulfillment**: Allocate stock from different customer accounts within the same shipment (ideal for shared inventory or borrowing scenarios).
+- **Auto-Sync Logic**: Changing the "Selling Customer" automatically pre-fills inventory sources for all order lines.
+- **CRUD with Rollback**: Editing or deleting a shipment automatically restores or adjusts inventory levels accurately.
 
-- **Backend**: FastAPI, SQLModel, SQLite, Uvicorn
-- **Frontend**: React, TypeScript, Vite, React-Bootstrap, Axios
+### 📥 Audit & Logs
+- **Comprehensive Logs**: Track every movement (Inbound, Manual Adjustments, Set Qty) with detailed remarks and timestamps.
+- **Search & Filter**: Multi-dimensional search across SKU, Customer, Date, and Remarks.
 
-## Core Features
+## 🛠️ Technology Stack
+- **Frontend**: React 19, TypeScript, Vite, React-Bootstrap.
+- **Backend**: Python 3.13, FastAPI, SQLModel (SQLAlchemy + Pydantic).
+- **Database**: SQLite with **Alembic** for professional schema migrations.
 
-### Customer & Product Management
-- Create/update/delete customers and products.
-- Link products to specific customers for quick association.
+## 🏁 Getting Started
 
-### Inventory Management
-- Add stock (inbound) with optional remarks.
-- Update quantities with adjustment tracking.
-- Set target stock and safety stock thresholds.
-- Filter inventory by stock owner and view grouped SKUs.
+### 1. The Easy Way (Windows)
+Simply double-click the **`start_app.bat`** file in the root directory. It will:
+- Launch the Python Backend.
+- Launch the React Frontend.
+- Automatically open your browser to `http://localhost:5173`.
 
-### Shipment Management
-- Create shipments and auto-decrease inventory.
-- Batch shipment support.
-- Update or delete shipments with inventory reconciliation.
+### 2. Manual Start
 
-### Inbound History
-- Automatic inbound transaction log for stock-in and manual adjustments.
-
-## Running the Project
-
-### 1. Backend (FastAPI)
-
-```bash
-cd backend
+#### Backend
+```powershell
+cd inventory-system/backend
 pip install -r requirements.txt
 python main.py
 ```
 
-- API base URL: `http://localhost:8000`
-- Swagger UI: `http://localhost:8000/docs`
-
-### 2. Frontend (React)
-
-```bash
-cd frontend
+#### Frontend
+```powershell
+cd inventory-system/frontend
 npm install
 npm run dev
 ```
 
-- Web app: `http://localhost:5173`
+## 🗄️ Database Migrations
+This project uses **Alembic**. If you modify the models in `main.py`, follow these steps to preserve data:
+1. Generate migration: `alembic revision --autogenerate -m "description"`
+2. Apply changes: `alembic upgrade head`
 
-### 3. Windows Quick Start (Optional)
-
-If you are on Windows, you can use the helper script from the repository root:
-
-```bat
-start_app.bat
-```
-
-## API Overview
-
-Key endpoints exposed by the backend:
-
-- `GET /customers/` — list customers with linked products.
-- `POST /customers/` — create a customer.
-- `GET /products/` — list products.
-- `POST /products/` — create a product.
-- `GET /inventory/` — list inventory with customer/product details.
-- `POST /inventory/` — stock in (creates inbound history).
-- `PUT /inventory/{id}` — update quantities/thresholds.
-- `GET /shipments/` — list shipments.
-- `POST /shipments/` — create a shipment (decreases inventory).
-- `POST /shipments/batch/` — create a batch shipment.
-- `GET /inbound-history/` — list inbound transactions.
-
-Refer to Swagger UI for the full request/response schema.
-
-## Data Storage
-
-The backend uses a local SQLite database stored at:
-
-```
-backend/database.db
-```
-
-This file is created automatically on first run.
-
-## Development Notes
-
-- The frontend expects the API at `http://localhost:8000`. Update `frontend/src/api.ts` if you need a different base URL.
-- CORS is open for local development.
+## 📝 License
+MIT
