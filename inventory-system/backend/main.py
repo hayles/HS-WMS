@@ -106,6 +106,8 @@ class ShipmentCreate(SQLModel):
 
 class ShipmentRead(SQLModel):
     id: int
+    customer_id: int
+    product_id: int
     customer: Customer
     product: Product
     quantity: int
@@ -479,12 +481,18 @@ def update_shipment(shipment_id: int, update_data: ShipmentUpdate):
             
             db_shipment.quantity = update_data.quantity
 
+        # 3. Update other fields
         if update_data.shipment_date: db_shipment.shipment_date = update_data.shipment_date
         if update_data.rma_ticket is not None: db_shipment.rma_ticket = update_data.rma_ticket
         
         session.add(db_shipment)
         session.commit()
         session.refresh(db_shipment)
+        
+        # Force load relationships to prevent DetachedInstanceError
+        _ = db_shipment.customer
+        _ = db_shipment.product
+        
         return db_shipment
 
 @app.delete("/shipments/{shipment_id}")

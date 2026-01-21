@@ -71,29 +71,46 @@ const ShipmentManager: React.FC = () => {
     setError(null);
   };
 
-  // When selectedCust changes, update ALL items' sourceId to match by default
-  useEffect(() => {
-      if (selectedCust && !editingId && showModal) {
-          setItems(prev => prev.map(i => ({ 
-              ...i, 
-              sourceId: selectedCust,
-              // Only reset product if the source actually changed to avoid losing selection on initial load
-              productId: i.sourceId !== selectedCust ? 0 : i.productId 
-          })));
+    // When selectedCust changes, update ALL items' sourceId to match by default
+    // CRITICAL FIX: Only do this in CREATE mode (!editingId). In Edit mode, data is set manually.
+    useEffect(() => {
+        if (selectedCust && !editingId && showModal) {
+            setItems(prev => prev.map(i => ({
+                ...i,
+                sourceId: selectedCust,
+                // Only reset product if the source actually changed to avoid losing selection on initial load
+                productId: i.sourceId !== selectedCust ? 0 : i.productId
+            })));
+        }
+    }, [selectedCust, editingId, showModal]);
+  
+    const handleEdit = async (s: Shipment) => {
+      // Wait for options to load if needed, but we can just set state directly
+      setEditingId(s.id!);
+      
+      // 1. Set Header
+      setSelectedCust(s.customer_id);
+      setRma(s.rma_ticket || '');
+      setDate(s.shipment_date.slice(0, 10));
+      
+      // 2. Set Items (Single Item for Edit)
+      // We assume source is the selling customer for legacy/simple edit
+      // (If backend supported stored source_id, we'd use that)
+      setItems([{ 
+          sourceId: s.customer_id, 
+          productId: s.product_id, 
+          quantity: s.quantity 
+      }]);
+      
+      // 3. Ensure products for this source are loaded in the map
+      if (!productMap[s.customer_id]) {
+          const pRes = await api.get<Product[]>(`/customers/${s.customer_id}/products`);
+          setProductMap(prev => ({ ...prev, [s.customer_id]: pRes.data }));
       }
-  }, [selectedCust, editingId, showModal]);
-
-  const handleEdit = (s: Shipment) => {
-    fetchOptions();
-    setEditingId(s.id!);
-    setSelectedCust(s.customer_id);
-    setItems([{ sourceId: s.customer_id, productId: s.product_id, quantity: s.quantity }]); // Source implicit
-    setRma(s.rma_ticket || '');
-    setDate(s.shipment_date.slice(0, 10));
-    setShowModal(true);
-    setError(null);
-  };
-
+  
+      setShowModal(true);
+      setError(null);
+    };
   const handleDelete = async (id: number) => {
     if(!confirm("Delete this shipment? Stock will be RETURNED.")) return;
     try {
